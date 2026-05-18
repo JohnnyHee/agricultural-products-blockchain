@@ -1,0 +1,406 @@
+{
+  "chain": [
+    {
+      "index": 0,
+      "timestamp": 1700000000,
+      "timestamp_str": "2023-11-15 06:13:20",
+      "transactions": [
+        {
+          "tx_id": "aff81ebb0f52462e37f3ecdef28d68fb5165202940869567cacfd75ec6e25f74",
+          "tx_type": "production",
+          "tx_type_label": "生产记录",
+          "data": {
+            "product_id": "GENESIS",
+            "product_name": "创世区块",
+            "producer": "区块链系统",
+            "origin": "系统初始化",
+            "notes": "农产品供应链溯源区块链的起源区块"
+          },
+          "timestamp": 1700000000,
+          "timestamp_str": "2023-11-15 06:13:20"
+        }
+      ],
+      "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "bc6d59e77326af6302cfaec2572778df085b6151eb46d24cb9f06abf450abcb2",
+      "nonce": 0,
+      "tx_count": 1
+    },
+    {
+      "index": 1,
+      "timestamp": 1779032456.178491,
+      "timestamp_str": "2026-05-17 23:40:56",
+      "transactions": [
+        {
+          "tx_id": "405b88efb16379b3bef9a48b18374364553a3c8a9720d838645706743953be93",
+          "tx_type": "production",
+          "tx_type_label": "生产记录",
+          "data": {
+            "product_id": "ORG-APPLE-2025-001",
+            "product_name": "有机红富士苹果",
+            "category": "水果",
+            "producer": "阳光生态农场",
+            "producer_id": "farm_001",
+            "origin": "黑龙江省五常市",
+            "planting_date": "2025-03-15",
+            "harvest_date": "2025-05-10",
+            "batch_number": "BATCH-9594",
+            "quality_grade": "特级",
+            "certification": "有机认证 GB/T 19630",
+            "notes": "采用生态种植方式，无农药残留"
+          },
+          "timestamp": 1779032456.178491,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "e3ed5df22523c733f8ef182529c3fec610f094e7237a1cc11b9cc6b93c14afba",
+          "tx_type": "processing",
+          "tx_type_label": "加工记录",
+          "data": {
+            "product_id": "ORG-APPLE-2025-001",
+            "product_name": "有机红富士苹果",
+            "processor": "鲜品加工厂",
+            "processor_id": "processor_001",
+            "process_type": "分拣·清洗·包装",
+            "processing_date": "2025-05-12",
+            "expiry_date": "2025-08-10",
+            "facility": "A区无菌加工车间",
+            "batch_number": "PROC-8171",
+            "supervisor": "李明",
+            "quality_check": "已通过食品安全检测"
+          },
+          "timestamp": 1779032456.178491,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "703c7493a74918238faa1748ca2a71fcbed2d5f0b989552e5de74cc5de6b181c",
+          "tx_type": "logistics",
+          "tx_type_label": "物流记录",
+          "data": {
+            "product_id": "ORG-APPLE-2025-001",
+            "product_name": "有机红富士苹果",
+            "logistics_provider": "顺达冷链物流",
+            "logistics_id": "logistics_001",
+            "transport_mode": "冷链运输 (0-4°C)",
+            "departure": "黑龙江省哈尔滨市",
+            "destination": "北京市朝阳区",
+            "shipment_date": "2025-05-13",
+            "estimated_arrival": "2025-05-15",
+            "tracking_number": "SF-146110",
+            "temperature_range": "0~4°C",
+            "vehicle_number": "京A·97033"
+          },
+          "timestamp": 1779032456.178491,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "be8ba8d217fd0895b7a6015907a1e0c672346c26c6c592ee40acc6a67034fc5e",
+          "tx_type": "sale",
+          "tx_type_label": "销售记录",
+          "data": {
+            "product_id": "ORG-APPLE-2025-001",
+            "product_name": "有机红富士苹果",
+            "seller": "盒马鲜生",
+            "seller_id": "seller_001",
+            "store": "盒马鲜生·北京朝阳店",
+            "shelf_date": "2025-05-16",
+            "selling_price": "35元/1kg",
+            "stock_quantity": 3868,
+            "promotion": "新品上市"
+          },
+          "timestamp": 1779032456.178491,
+          "timestamp_str": "2026-05-17 23:40:56"
+        }
+      ],
+      "previous_hash": "bc6d59e77326af6302cfaec2572778df085b6151eb46d24cb9f06abf450abcb2",
+      "hash": "000027522f7a51a88bffaa042a73e7f7a63bf9ab42afd2fa15538cbb8d4dac31",
+      "nonce": 40086,
+      "tx_count": 4
+    },
+    {
+      "index": 2,
+      "timestamp": 1779032456.2682517,
+      "timestamp_str": "2026-05-17 23:40:56",
+      "transactions": [
+        {
+          "tx_id": "65b9351d466e54ea7da14c2c29396fe4df56e5f9cc82224031224ecb901d4ba8",
+          "tx_type": "production",
+          "tx_type_label": "生产记录",
+          "data": {
+            "product_id": "ORG-RICE-2025-001",
+            "product_name": "五常有机大米",
+            "category": "粮食",
+            "producer": "阳光生态农场",
+            "producer_id": "farm_001",
+            "origin": "黑龙江省五常市",
+            "planting_date": "2025-03-15",
+            "harvest_date": "2025-05-10",
+            "batch_number": "BATCH-2315",
+            "quality_grade": "特级",
+            "certification": "有机认证 GB/T 19630",
+            "notes": "采用生态种植方式，无农药残留"
+          },
+          "timestamp": 1779032456.267254,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "080dd14e0dfa6d413c1949b6c15fc62e142853440f13bf2b7c6cd010525d18c8",
+          "tx_type": "processing",
+          "tx_type_label": "加工记录",
+          "data": {
+            "product_id": "ORG-RICE-2025-001",
+            "product_name": "五常有机大米",
+            "processor": "鲜品加工厂",
+            "processor_id": "processor_001",
+            "process_type": "分拣·清洗·包装",
+            "processing_date": "2025-05-12",
+            "expiry_date": "2025-08-10",
+            "facility": "A区无菌加工车间",
+            "batch_number": "PROC-5343",
+            "supervisor": "李明",
+            "quality_check": "已通过食品安全检测"
+          },
+          "timestamp": 1779032456.267254,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "83c99e2a465c9d14dc6a466762d89916143b5c456228d8ad8d3690311ccaa3ab",
+          "tx_type": "logistics",
+          "tx_type_label": "物流记录",
+          "data": {
+            "product_id": "ORG-RICE-2025-001",
+            "product_name": "五常有机大米",
+            "logistics_provider": "顺达冷链物流",
+            "logistics_id": "logistics_001",
+            "transport_mode": "冷链运输 (0-4°C)",
+            "departure": "黑龙江省哈尔滨市",
+            "destination": "北京市朝阳区",
+            "shipment_date": "2025-05-13",
+            "estimated_arrival": "2025-05-15",
+            "tracking_number": "SF-885786",
+            "temperature_range": "0~4°C",
+            "vehicle_number": "京A·10272"
+          },
+          "timestamp": 1779032456.267254,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "9e8210d2a4e50574a4467713e024ab8f54a6624c89934739d03819650adc8658",
+          "tx_type": "sale",
+          "tx_type_label": "销售记录",
+          "data": {
+            "product_id": "ORG-RICE-2025-001",
+            "product_name": "五常有机大米",
+            "seller": "盒马鲜生",
+            "seller_id": "seller_001",
+            "store": "盒马鲜生·北京朝阳店",
+            "shelf_date": "2025-05-16",
+            "selling_price": "138元/500g",
+            "stock_quantity": 4810,
+            "promotion": "新品上市"
+          },
+          "timestamp": 1779032456.2682517,
+          "timestamp_str": "2026-05-17 23:40:56"
+        }
+      ],
+      "previous_hash": "000027522f7a51a88bffaa042a73e7f7a63bf9ab42afd2fa15538cbb8d4dac31",
+      "hash": "0000672900b809fcc11f35e4c8199d649ab521656c9851a0b998dfdd2fe8c552",
+      "nonce": 52358,
+      "tx_count": 4
+    },
+    {
+      "index": 3,
+      "timestamp": 1779032456.383942,
+      "timestamp_str": "2026-05-17 23:40:56",
+      "transactions": [
+        {
+          "tx_id": "da5ff097c861f6a1bff8604cf2a77a075370e3b251f80e39f4a5771f40166186",
+          "tx_type": "production",
+          "tx_type_label": "生产记录",
+          "data": {
+            "product_id": "ORG-TEA-2025-001",
+            "product_name": "西湖龙井茶叶",
+            "category": "茶叶",
+            "producer": "阳光生态农场",
+            "producer_id": "farm_001",
+            "origin": "黑龙江省五常市",
+            "planting_date": "2025-03-15",
+            "harvest_date": "2025-05-10",
+            "batch_number": "BATCH-5296",
+            "quality_grade": "特级",
+            "certification": "有机认证 GB/T 19630",
+            "notes": "采用生态种植方式，无农药残留"
+          },
+          "timestamp": 1779032456.383942,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "b190af00b47d435b762bc35d5155eac8a444c0a10f4ac9a78c8bf660befeaff9",
+          "tx_type": "processing",
+          "tx_type_label": "加工记录",
+          "data": {
+            "product_id": "ORG-TEA-2025-001",
+            "product_name": "西湖龙井茶叶",
+            "processor": "鲜品加工厂",
+            "processor_id": "processor_001",
+            "process_type": "分拣·清洗·包装",
+            "processing_date": "2025-05-12",
+            "expiry_date": "2025-08-10",
+            "facility": "A区无菌加工车间",
+            "batch_number": "PROC-8839",
+            "supervisor": "李明",
+            "quality_check": "已通过食品安全检测"
+          },
+          "timestamp": 1779032456.383942,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "ade6ab38cc778a819feb107053e75623bb6539e8619799e8d765bc59acd1f57a",
+          "tx_type": "logistics",
+          "tx_type_label": "物流记录",
+          "data": {
+            "product_id": "ORG-TEA-2025-001",
+            "product_name": "西湖龙井茶叶",
+            "logistics_provider": "顺达冷链物流",
+            "logistics_id": "logistics_001",
+            "transport_mode": "冷链运输 (0-4°C)",
+            "departure": "黑龙江省哈尔滨市",
+            "destination": "北京市朝阳区",
+            "shipment_date": "2025-05-13",
+            "estimated_arrival": "2025-05-15",
+            "tracking_number": "SF-635892",
+            "temperature_range": "0~4°C",
+            "vehicle_number": "京A·67141"
+          },
+          "timestamp": 1779032456.383942,
+          "timestamp_str": "2026-05-17 23:40:56"
+        },
+        {
+          "tx_id": "75e28cd3adbe9f9c4d018fcbe8b08ec57ef692382bb28d18c9ece373341f2e22",
+          "tx_type": "sale",
+          "tx_type_label": "销售记录",
+          "data": {
+            "product_id": "ORG-TEA-2025-001",
+            "product_name": "西湖龙井茶叶",
+            "seller": "盒马鲜生",
+            "seller_id": "seller_001",
+            "store": "盒马鲜生·北京朝阳店",
+            "shelf_date": "2025-05-16",
+            "selling_price": "80元/1kg",
+            "stock_quantity": 4165,
+            "promotion": "新品上市"
+          },
+          "timestamp": 1779032456.383942,
+          "timestamp_str": "2026-05-17 23:40:56"
+        }
+      ],
+      "previous_hash": "0000672900b809fcc11f35e4c8199d649ab521656c9851a0b998dfdd2fe8c552",
+      "hash": "00003bac5bf07a6cff8ed6d9b4c4c50157e0b4fe1477fb2d5fc40e2ae0f5abd6",
+      "nonce": 25969,
+      "tx_count": 4
+    },
+    {
+      "index": 4,
+      "timestamp": 1779032486.5636613,
+      "timestamp_str": "2026-05-17 23:41:26",
+      "transactions": [
+        {
+          "tx_id": "ea70258624fcc43ee57d97d9afc136d23bba7304b7a2ee873be9062a8d4e5749",
+          "tx_type": "production",
+          "tx_type_label": "生产记录",
+          "data": {
+            "product_id": "ORG-RICE-2025-001",
+            "product_name": "？？？",
+            "category": "水果",
+            "producer": "阳光生态农场",
+            "origin": "黑龙江省五常市",
+            "planting_date": "2026-05-17",
+            "harvest_date": "2026-05-17",
+            "batch_number": "BATCH-7463",
+            "quality_grade": "特级",
+            "certification": "有机认证 GB/T 19630",
+            "notes": "采用生态种植方式，无农药残留"
+          },
+          "timestamp": 1779032477.554949,
+          "timestamp_str": "2026-05-17 23:41:17"
+        }
+      ],
+      "previous_hash": "00003bac5bf07a6cff8ed6d9b4c4c50157e0b4fe1477fb2d5fc40e2ae0f5abd6",
+      "hash": "0000e70cd84c3fc7aa9783c45cbe88c3036cbc37682a8de58069bfd832da2668",
+      "nonce": 34338,
+      "tx_count": 1
+    }
+  ],
+  "pending_transactions": [],
+  "product_registry": {
+    "ORG-APPLE-2025-001": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "ORG-RICE-2025-001": [
+      2,
+      2,
+      2,
+      2,
+      4
+    ],
+    "ORG-TEA-2025-001": [
+      3,
+      3,
+      3,
+      3
+    ]
+  },
+  "participants": {
+    "farm_001": {
+      "name": "阳光生态农场",
+      "role": "生产者",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "farm_002": {
+      "name": "绿源有机农场",
+      "role": "生产者",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "processor_001": {
+      "name": "鲜品加工厂",
+      "role": "加工商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "processor_002": {
+      "name": "绿农食品加工公司",
+      "role": "加工商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "logistics_001": {
+      "name": "顺达冷链物流",
+      "role": "物流商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "logistics_002": {
+      "name": "京东冷链运输",
+      "role": "物流商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "seller_001": {
+      "name": "盒马鲜生",
+      "role": "销售商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    },
+    "seller_002": {
+      "name": "永辉超市",
+      "role": "销售商",
+      "extra": {},
+      "registered_at": "2026-05-17 23:40:56"
+    }
+  },
+  "difficulty": 4
+}
