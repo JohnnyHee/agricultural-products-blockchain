@@ -1,835 +1,1482 @@
+# -*- coding: utf-8 -*-
 """
-Streamlit 区块链系统 - 农产品供应链溯源系统
-提供直观的界面进行区块链浏览、交易创建、产品追溯与链验�?
+农产品区块链溯源系统 —— Streamlit 前端
+
+本文件只负责「界面 + 交互」，链的实现位于 ``blockchain.py``，
+业务语义（字段标签、冷链规则、保质期、溯源证书）位于 ``supply_chain.py``。
 """
 
-import streamlit as st
+from __future__ import annotations
+
+import copy
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
-import time
-import json
-import random
-from datetime import datetime
-from pathlib import Path
-from blockchain import Blockchain, Transaction
+import plotly.graph_objects as go
+import streamlit as st
 
-# ─── 数据持久化配�?─────────────────────────────────────────
-DATA_DIR = Path(__file__).parent / "blockchain_data"
-DATA_FILE = DATA_DIR / "blockchain_backup.json"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+import supply_chain as sc
+from blockchain import (
+    REQUIRED_FIELDS,
+    SCHEMA_VERSION,
+    TRANSACTION_TYPES,
+    Blockchain,
+    Transaction,
+    compute_merkle_root,
+    resolve_data_dir,
+    verify_merkle_proof,
+)
 
-# ─── 页面配置 ───────────────────────────────────────────────
+# ── 页面配置 ────────────────────────────────────────────────────────────────
+
 st.set_page_config(
-    page_title="区块链溯源系�?系统",
-    page_icon="🔗",
+    page_title="农产品区块链溯源系统",
+    page_icon="🌾",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─── 初始�?Session State ───────────────────────────────────
-if "product_filter" not in st.session_state:
-    st.session_state.product_filter = "全部"
+DATA_DIR = resolve_data_dir()
+DATA_FILE = DATA_DIR / "blockchain.json"
 
+CHAIN_ICON = {"production": "🌱", "processing": "🏭", "logistics": "🚚", "sale": "🏪"}
 
-def _seed_init_data(bc: Blockchain):
-    """生成演示用的供应链数�?""
-    init_products = [
-        {
-            "product_id": "ORG-APPLE-2025-001",
-            "product_name": "有机红富士苹�?,
-            "category": "水果",
-        },
-        {
-            "product_id": "ORG-RICE-2025-001",
-            "product_name": "五常有机大米",
-            "category": "粮食",
-        },
-        {
-            "product_id": "ORG-TEA-2025-001",
-            "product_name": "西湖龙井茶叶",
-            "category": "茶叶",
-        },
-    ]
-
-    for prod in init_products:
-        pid = prod["product_id"]
-
-        # 1. 生产记录
-        tx1 = Transaction("production", {
-            "product_id": pid,
-            "product_name": prod["product_name"],
-            "category": prod["category"],
-            "producer": "阳光生态农�?,
-            "producer_id": "farm_001",
-            "origin": "黑龙江省五常�?,
-            "planting_date": "2025-03-15",
-            "harvest_date": "2025-05-10",
-            "batch_number": f"BATCH-{random.randint(1000,9999)}",
-            "quality_grade": "特级",
-            "certification": "有机认证 GB/T 19630",
-            "notes": "采用生态种植方式，无农药残�?,
-        })
-        bc.add_transaction(tx1)
-
-        # 2. 加工记录
-        tx2 = Transaction("processing", {
-            "product_id": pid,
-            "product_name": prod["product_name"],
-            "processor": "鲜品加工�?,
-            "processor_id": "processor_001",
-            "process_type": "分拣·清洗·包装",
-            "processing_date": "2025-05-12",
-            "expiry_date": "2025-08-10",
-            "facility": "A区无菌加工车�?,
-            "batch_number": f"PROC-{random.randint(1000,9999)}",
-            "supervisor": "李明",
-            "quality_check": "已通过食品安全检�?,
-        })
-        bc.add_transaction(tx2)
-
-        # 3. 物流记录
-        tx3 = Transaction("logistics", {
-            "product_id": pid,
-            "product_name": prod["product_name"],
-            "logistics_provider": "顺达冷链物流",
-            "logistics_id": "logistics_001",
-            "transport_mode": "冷链运输 (0-4°C)",
-            "departure": "黑龙江省哈尔滨市",
-            "destination": "北京市朝阳区",
-            "shipment_date": "2025-05-13",
-            "estimated_arrival": "2025-05-15",
-            "tracking_number": f"SF-{random.randint(100000,999999)}",
-            "temperature_range": "0~4°C",
-            "vehicle_number": f"京A·{random.randint(10000,99999)}",
-        })
-        bc.add_transaction(tx3)
-
-        # 4. 销售记�?
-        tx4 = Transaction("sale", {
-            "product_id": pid,
-            "product_name": prod["product_name"],
-            "seller": "盒马鲜生",
-            "seller_id": "seller_001",
-            "store": "盒马鲜生·北京朝阳�?,
-            "shelf_date": "2025-05-16",
-            "selling_price": f"{random.randint(20, 150)}�?{['500g','1kg','250g'][random.randint(0,2)]}",
-            "stock_quantity": random.randint(500, 5000),
-            "promotion": "新品上市",
-        })
-        bc.add_transaction(tx4)
-
-        # 挖矿
-        bc.mine_pending_transactions()
-
-
-# ─── 区块链初始化（优先从本地加载）────────────────────────
-if "blockchain" not in st.session_state:
-    # 尝试从本地文件加�?
-    loaded_bc = Blockchain.load_from_file(str(DATA_FILE))
-
-    if loaded_bc is not None:
-        bc_init = loaded_bc
-        st.toast("📂 已从本地加载区块链数�?, icon="💾")
-    else:
-        bc_init = Blockchain()
-        # 注册默认参与�?
-        bc_init.register_participant("farm_001", "阳光生态农�?, "生产�?)
-        bc_init.register_participant("farm_002", "绿源有机农场", "生产�?)
-        bc_init.register_participant("processor_001", "鲜品加工�?, "加工�?)
-        bc_init.register_participant("processor_002", "绿农食品加工公司", "加工�?)
-        bc_init.register_participant("logistics_001", "顺达冷链物流", "物流�?)
-        bc_init.register_participant("logistics_002", "京东冷链运输", "物流�?)
-        bc_init.register_participant("seller_001", "盒马鲜生", "销售商")
-        bc_init.register_participant("seller_002", "永辉超市", "销售商")
-
-        # 预生成一些演示数�?
-        _seed_init_data(bc_init)
-        # 首次创建时保存到本地
-        bc_init.save_to_file(str(DATA_FILE))
-
-    st.session_state.blockchain = bc_init
-    st.session_state.init_loaded = True
-
-
-# ─── 工具函数 ───────────────────────────────────────────────
-def _save_blockchain():
-    """将当前区块链状态保存到本地文件"""
-    bc = st.session_state.blockchain
-    bc.save_to_file(str(DATA_FILE))
-
-
-# ─── 侧边�?─────────────────────────────────────────────────
-st.sidebar.markdown(
-    """
-    <div style="text-align:center;padding:1rem 0">
-        <h1 style="font-size:2.5rem;margin:0">🔗</h1>
-        <h3 style="margin:0.3rem 0">区块链溯源系�?/h3>
-        <p style="font-size:0.8rem;color:#888">农产品供应链 系统</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.sidebar.divider()
-
-page = st.sidebar.radio(
-    "功能导航",
-    [
-        "📊 区块链总览",
-        "🔍 产品追溯",
-        "�?添加交易",
-        "⛏️ 挖矿打包",
-        "�?链验�?,
-        "👥 参与方管�?,
-    ],
-    label_visibility="collapsed",
-)
-
-st.sidebar.divider()
-bc: Blockchain = st.session_state.blockchain
-stats = bc.get_chain_stats()
-
-st.sidebar.markdown("### 📊 实时状�?)
-col1, col2 = st.sidebar.columns(2)
-col1.metric("区块�?, stats["block_count"])
-col2.metric("总交易数", stats["total_transactions"])
-col1.metric("产品�?, stats["unique_products"])
-col2.metric("待处理交�?, stats["pending_transactions"])
-
-st.sidebar.divider()
-st.sidebar.caption("💡 本系统模拟了农产品从生产→加工→物流→销售的全链路区块链追溯")
-
-# ─── 数据管理按钮 ──────────────────────────────────────────
-st.sidebar.divider()
-with st.sidebar.container():
-    data_col1, data_col2 = st.columns(2)
-    with data_col1:
-        if st.button("💾 保存", width='stretch', key="sidebar_save"):
-            _save_blockchain()
-            st.toast("�?区块链已保存到本�?, icon="💾")
-    with data_col2:
-        if st.button("🔄 重载", width='stretch', key="sidebar_reload"):
-            loaded = Blockchain.load_from_file(str(DATA_FILE))
-            if loaded is not None:
-                st.session_state.blockchain = loaded
-                st.rerun()
-            else:
-                st.toast("⚠️ 本地无保存数�?, icon="�?)
-st.sidebar.caption(f"📁 `{DATA_FILE.name}` ({stats['chain_size_kb']:.1f} KB)")
-
-
-# ─── 工具函数 ───────────────────────────────────────────────
-def get_product_list(bc: Blockchain) -> list:
-    """获取所有产品列�?""
-    products = set()
-    for block in bc.chain:
-        for tx in block.transactions:
-            pid = tx.data.get("product_id")
-            if pid and pid != "GENESIS":
-                products.add(pid)
-    return sorted(products)
-
-
-def get_transaction_color(tx_type: str) -> str:
-    colors = {
-        "production": "#27AE60",
-        "processing": "#2980B9",
-        "logistics": "#F39C12",
-        "sale": "#E74C3C",
+CUSTOM_CSS = """
+<style>
+    .block-container { padding-top: 2.2rem; padding-bottom: 3rem; }
+    .hero {
+        background: linear-gradient(120deg, #1b5e20 0%, #2e7d32 45%, #43a047 100%);
+        border-radius: 16px; padding: 1.6rem 2rem; color: #fff;
+        margin-bottom: 1.4rem; box-shadow: 0 6px 20px rgba(27, 94, 32, .28);
     }
-    return colors.get(tx_type, "#95A5A6")
+    .hero h1 { margin: 0; font-size: 1.85rem; font-weight: 700; letter-spacing: .5px; }
+    .hero p  { margin: .5rem 0 0; opacity: .92; font-size: .95rem; }
+    .stage-card {
+        border-left: 6px solid #2e7d32; background: #fafafa;
+        border-radius: 10px; padding: .9rem 1.1rem; margin-bottom: .6rem;
+    }
+    .stage-card h4 { margin: 0 0 .5rem; font-size: 1.02rem; }
+    .stage-card table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+    .stage-card th {
+        text-align: left; color: #607d8b; font-weight: 500;
+        padding: 2px 10px 2px 0; white-space: nowrap; vertical-align: top;
+        width: 34%;
+    }
+    .stage-card td { padding: 2px 0; color: #263238; word-break: break-all; }
+    .pill {
+        display: inline-block; padding: 2px 11px; border-radius: 999px;
+        font-size: .76rem; font-weight: 600; margin-right: 6px;
+    }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: #455a64; }
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-def render_tx_card(tx_dict: dict, index: int):
-    """渲染单个交易卡片"""
-    tx_type = tx_dict["tx_type"]
-    color = get_transaction_color(tx_type)
-    icon_map = {"production": "🌾", "processing": "🏭", "logistics": "🚚", "sale": "🏪"}
+# ── 链的生命周期管理 ────────────────────────────────────────────────────────
 
+
+def _new_chain() -> Blockchain:
+    """创建一条带演示数据的新链。"""
+    chain = sc.seed_blockchain()
+    try:
+        chain.save_to_file(str(DATA_FILE))
+    except OSError as error:  # 只读挂载等极端情况下仍可使用内存中的链
+        st.session_state["persist_error"] = str(error)
+    return chain
+
+
+def get_chain() -> Blockchain:
+    """取得当前会话的链对象（首次访问时从磁盘加载或新建）。"""
+    if "chain" not in st.session_state:
+        loaded = Blockchain.load_from_file(str(DATA_FILE))
+        st.session_state["chain"] = loaded if loaded is not None else _new_chain()
+    return st.session_state["chain"]
+
+
+def persist_chain() -> None:
+    """把当前链写回磁盘（原子写）。"""
+    try:
+        get_chain().save_to_file(str(DATA_FILE))
+        st.toast("已保存到本地文件", icon="💾")
+    except OSError as error:
+        st.error(f"保存失败：{error}")
+
+
+def reset_chain(with_demo_data: bool) -> None:
+    """重建链（可选是否写入演示数据）。"""
+    chain = sc.seed_blockchain() if with_demo_data else Blockchain()
+    chain.save_to_file(str(DATA_FILE))
+    st.session_state["chain"] = chain
+    st.session_state.pop("chain_backup", None)
+    st.rerun()
+
+
+# ── 通用展示辅助 ────────────────────────────────────────────────────────────
+
+
+def fmt_value(field: str, value: Any) -> str:
+    """按字段标签给值补上单位，并做可读化处理。"""
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (list, tuple)):
+        parts = [f"{v}°C" if isinstance(v, (int, float)) else str(v) for v in value]
+        return "、".join(parts)
+    label, unit = sc.FIELD_LABELS.get(field, (field, ""))
+    text = str(value)
+    if unit and unit not in text:
+        text = f"{text}{unit}"
+    return text
+
+
+def bool_cell(flag: bool) -> str:
+    return "✅" if flag else "❌"
+
+
+def stage_card_html(record: Dict[str, Any]) -> str:
+    """渲染单个环节的卡片 HTML。"""
+    tx_type = record["tx_type"]
+    color = sc.STAGE_COLORS.get(tx_type, "#455a64")
+    icon = sc.stage_icon(tx_type)
+    label = TRANSACTION_TYPES.get(tx_type, tx_type)
+
+    rows: List[str] = []
+    for field, value in record["data"].items():
+        if field in ("product_id", "product_name", "category"):
+            continue
+        field_label, _ = sc.FIELD_LABELS.get(field, (field, ""))
+        rows.append(
+            f"<tr><th>{field_label}</th><td>{fmt_value(field, value)}</td></tr>"
+        )
+
+    return (
+        f'<div class="stage-card" style="border-left-color:{color}">'
+        f"<h4>{icon} {label}</h4>"
+        f'<div class="mono">区块 #{record["block_index"]} · '
+        f'交易 {record["tx_id"][:16]}… · 上链时间 {record["block_time"]}</div>'
+        f"<table>{''.join(rows)}</table></div>"
+    )
+
+
+def status_banner() -> None:
+    """侧边栏顶部的链状态提示。"""
+    chain = get_chain()
+    ok, message = chain.is_chain_valid()
+    if ok:
+        st.success(f"✅ {message}", icon="🔒")
+    else:
+        st.error(f"⚠️ {message}", icon="🚨")
+
+
+# ── 页面 1：总览看板 ────────────────────────────────────────────────────────
+
+
+def page_overview() -> None:
     st.markdown(
-        f"""
-        <div style="
-            border-left: 4px solid {color};
-            background: {'#0E2D1A' if tx_type=='production' else '#0D253F' if tx_type=='processing' else '#2D1F0E' if tx_type=='logistics' else '#2D0E0E'};
-            padding: 0.8rem 1rem;
-            border-radius: 0 8px 8px 0;
-            margin-bottom: 0.5rem;
-        ">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-                <span><strong>{icon_map[tx_type]} {tx_dict['tx_type_label']}</strong></span>
-                <span style="font-size:0.75rem;color:#888">{tx_dict['timestamp_str']}</span>
-            </div>
-            <div style="font-size:0.85rem;margin-top:0.3rem">
-                <span style="color:#ccc">交易ID:</span> <code style="font-size:0.75rem">{tx_dict['tx_id'][:16]}...</code>
-            </div>
-        </div>
-        """,
+        '<div class="hero"><h1>🌾 农产品区块链溯源系统</h1>'
+        "<p>从田间到餐桌的全链路可信存证 —— 生产、加工、物流、销售四环节上链，"
+        "支持完整性校验、Merkle 证明与篡改检测。</p></div>",
         unsafe_allow_html=True,
     )
 
-    with st.expander("📋 查看详情", expanded=False):
-        data = tx_dict["data"]
-        for k, v in data.items():
-            label_map = {
-                "product_id": "产品ID",
-                "product_name": "产品名称",
-                "category": "产品类别",
-                "producer": "生产�?,
-                "producer_id": "生产者ID",
-                "origin": "产地",
-                "planting_date": "种植日期",
-                "harvest_date": "收获日期",
-                "batch_number": "批号",
-                "quality_grade": "品质等级",
-                "certification": "认证信息",
-                "processor": "加工�?,
-                "processor_id": "加工商ID",
-                "process_type": "加工类型",
-                "processing_date": "加工日期",
-                "expiry_date": "保质期至",
-                "facility": "加工设施",
-                "supervisor": "负责�?,
-                "quality_check": "质检结果",
-                "logistics_provider": "物流�?,
-                "logistics_id": "物流商ID",
-                "transport_mode": "运输方式",
-                "departure": "出发�?,
-                "destination": "目的�?,
-                "shipment_date": "发货日期",
-                "estimated_arrival": "预计到达",
-                "tracking_number": "运单�?,
-                "temperature_range": "温度范围",
-                "vehicle_number": "车牌�?,
-                "seller": "销售商",
-                "seller_id": "销售商ID",
-                "store": "销售门�?,
-                "shelf_date": "上架日期",
-                "selling_price": "售价",
-                "stock_quantity": "库存�?,
-                "promotion": "促销信息",
+    chain = get_chain()
+    stats = chain.get_chain_stats()
+    ok, message = chain.is_chain_valid()
+
+    if ok:
+        st.success(message, icon="🔒")
+    else:
+        st.error(message, icon="🚨")
+
+    row = st.columns(6)
+    row[0].metric("区块总数", stats["block_count"])
+    row[1].metric("交易总数", stats["total_transactions"])
+    row[2].metric("已溯源产品", stats["unique_products"])
+    row[3].metric("参与方", stats["participants"])
+    row[4].metric("当前难度", stats["difficulty"])
+    row[5].metric(
+        "待打包交易", stats["pending_transactions"], delta_color="off"
+    )
+
+    row2 = st.columns(4)
+    row2[0].metric("平均出块间隔", f"{stats['avg_block_seconds']:.2f} s")
+    row2[1].metric("平均挖矿耗时", f"{stats['avg_mine_seconds']:.3f} s")
+    row2[2].metric("累计哈希尝试", f"{stats['total_pow_attempts']:,}")
+    row2[3].metric("链数据体积", f"{stats['chain_size_kb']:.2f} KB")
+
+    st.divider()
+    left, right = st.columns([3, 2])
+
+    with left:
+        st.subheader("📦 各区块交易构成")
+        blocks = chain.chain
+        fig = go.Figure()
+        for tx_type, label in TRANSACTION_TYPES.items():
+            counts = [
+                sum(1 for tx in block.transactions if tx.tx_type == tx_type)
+                for block in blocks
+            ]
+            fig.add_bar(
+                x=[f"#{b.index}" for b in blocks],
+                y=counts,
+                name=label,
+                marker_color=sc.STAGE_COLORS.get(tx_type),
+            )
+        fig.update_layout(
+            barmode="stack",
+            height=340,
+            margin=dict(l=10, r=10, t=20, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            yaxis_title="交易数",
+            xaxis_title="区块",
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    with right:
+        st.subheader("🥧 产品类别分布")
+        categories: Dict[str, int] = {}
+        for pid in chain.get_product_list():
+            records = chain.trace_product(pid)
+            category = records[0]["data"].get("category", "未分类") if records else "未分类"
+            categories[category] = categories.get(category, 0) + 1
+        if categories:
+            pie = go.Figure(
+                go.Pie(
+                    labels=list(categories),
+                    values=list(categories.values()),
+                    hole=0.45,
+                )
+            )
+            pie.update_layout(height=340, margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(pie, width="stretch")
+        else:
+            st.info("暂无产品数据")
+
+    st.divider()
+    st.subheader("⛏️ 最近挖矿记录")
+    if chain.mining_log:
+        log_rows = [
+            {
+                "区块": entry["index"],
+                "矿工": entry["miner"],
+                "难度": entry["difficulty"],
+                "Nonce": entry["nonce"],
+                "尝试次数": entry["attempts"],
+                "耗时(秒)": entry["duration_s"],
+                "交易数": entry["tx_count"],
+                "时间": datetime.fromtimestamp(entry["timestamp"]).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
             }
-            st.text(f"{label_map.get(k, k)}: {v}")
+            for entry in reversed(chain.mining_log[-10:])
+        ]
+        st.dataframe(pd.DataFrame(log_rows), width="stretch", hide_index=True)
+    else:
+        st.info("暂无挖矿记录")
 
 
-# ══════════════════════════════════════════════════════════�?
-# 页面 1: 区块链总览
-# ══════════════════════════════════════════════════════════�?
-if page == "📊 区块链总览":
-    st.title("📊 区块链总览")
-    st.markdown("农产品供应链溯源区块链的全局概览，展示所有区块与交易数据�?)
+# ── 页面 2：产品溯源 ────────────────────────────────────────────────────────
 
-    # 统计卡片
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("🧱 区块总数", stats["block_count"], delta="创世区块 + 已挖区块")
-    with c2:
-        st.metric("📝 交易总数", stats["total_transactions"])
-    with c3:
-        st.metric("📦 产品追溯", stats["unique_products"], delta="种产�?)
-    with c4:
-        st.metric("�?待处理交�?, stats["pending_transactions"])
 
-    # 区块链可视化
-    st.subheader("🗺�?区块链结�?)
-    st.caption("每个区块包含多笔交易，通过哈希指针链接成不可篡改的链式结构")
+def page_trace() -> None:
+    st.header("🔍 产品溯源查询")
+    chain = get_chain()
+    products = chain.get_product_list()
 
-    # 区块流水
-    for i, block in enumerate(reversed(bc.chain)):
-        bd = block.to_dict()
-        is_genesis = bd["index"] == 0
-        with st.container():
-            cols = st.columns([1, 11])
-            with cols[0]:
-                if is_genesis:
-                    st.markdown("#### 🪨")
-                else:
-                    st.markdown("#### 🧱")
-
-            with cols[1]:
-                block_color = "#8B4513" if is_genesis else "#1a6b3c"
-                block_label = "🪨 创世区块" if is_genesis else f"区块 #{bd['index']}"
-
-                st.markdown(
-                    f"""
-                    <div style="
-                        background:{'#1a1a2e' if not is_genesis else '#2e1a0e'};
-                        border:1px solid {block_color};
-                        border-radius:10px;
-                        padding:0.8rem 1.2rem;
-                        margin-bottom:0.5rem;
-                    ">
-                        <div style="display:flex;justify-content:space-between;align-items:center">
-                            <span style="font-size:1.1rem;font-weight:bold">{block_label}</span>
-                            <span style="font-size:0.8rem;color:#888">{bd['timestamp_str']}</span>
-                        </div>
-                        <div style="display:flex;gap:1.5rem;font-size:0.8rem;margin-top:0.3rem;flex-wrap:wrap">
-                            <span>📄 交易�? <strong>{bd['tx_count']}</strong></span>
-                            <span>🔗 Nonce: <strong>{bd['nonce']}</strong></span>
-                            <span style="color:#aaa">
-                                哈希: <code>{bd['hash'][:20]}...</code>
-                            </span>
-                        </div>
-                        <div style="font-size:0.75rem;color:#666;margin-top:0.2rem">
-                            前置哈希: <code>{bd['previous_hash'][:20]}...</code>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                # 区块内交易列�?
-                for j, tx in enumerate(bd["transactions"]):
-                    render_tx_card(tx, j)
-
-    st.info("🟢 所有区块通过哈希指针链接，任何数据的篡改都将导致后续所有区块哈希不一致，从而被系统检测到�?)
-
-# ══════════════════════════════════════════════════════════�?
-# 页面 2: 产品追溯
-# ══════════════════════════════════════════════════════════�?
-elif page == "🔍 产品追溯":
-    st.title("🔍 产品追溯")
-    st.markdown("输入产品ID，追溯该产品从生产到销售的全生命周期记录�?)
-
-    products = get_product_list(bc)
     if not products:
-        st.warning("暂无产品数据")
-    else:
-        selected_product = st.selectbox(
-            "选择要追溯的产品",
-            products,
-            index=None,
-            placeholder="请选择产品...",
+        st.warning("链上暂无产品记录，请先到「添加交易」页面上链数据。")
+        return
+
+    labels: Dict[str, str] = {}
+    for pid in products:
+        records = chain.trace_product(pid)
+        name = records[0]["data"].get("product_name", "") if records else ""
+        labels[pid] = f"{name}（{pid}）" if name else pid
+
+    selected = st.selectbox(
+        "选择要溯源的产品", products, format_func=lambda p: labels.get(p, p)
+    )
+    records = chain.trace_product(selected)
+    first = records[0]["data"] if records else {}
+
+    info = st.columns(4)
+    info[0].metric("产品名称", first.get("product_name", "—"))
+    info[1].metric("产品编号", selected)
+    info[2].metric("类别", first.get("category", "—"))
+    info[3].metric("溯源记录数", len(records))
+
+    with st.expander("🔗 产品身份与链上索引", expanded=False):
+        product_blocks = chain.product_blocks.get(selected, [])
+        st.write(f"**所在区块：** {', '.join(f'#{i}' for i in product_blocks) or '—'}")
+        st.write(f"**交易条数：** {len(records)}")
+        st.write(
+            f"**索引方式：** `product_index` 记录每笔交易的 (区块号, 交易下标)，"
+            f"因此同一产品多笔交易不会被重复统计。"
         )
 
-        if selected_product:
-            trace = bc.trace_product(selected_product)
-            if trace:
-                product_info = trace[0]["data"]
-                st.subheader(f"📦 {product_info.get('product_name', selected_product)}")
+    st.divider()
+    st.subheader("🕓 全链路时间线")
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("产品ID", selected_product)
-                c2.metric("类别", product_info.get("category", "-"))
-                c3.metric("追溯环节", f"{len(trace)} 个环�?)
+    for record in records:
+        st.markdown(stage_card_html(record), unsafe_allow_html=True)
 
-                st.divider()
+    st.divider()
+    left, right = st.columns(2)
 
-                # 时间线展�?
-                st.subheader("📅 全链路追溯时间线")
-
-                for idx, record in enumerate(trace):
-                    tx_data = record["data"]
-                    tx_type = record["tx_type"]
-                    color = get_transaction_color(tx_type)
-                    icon_map = {
-                        "production": "🌾",
-                        "processing": "🏭",
-                        "logistics": "🚚",
-                        "sale": "🏪",
-                    }
-
-                    # 时间线节�?
-                    cols = st.columns([1, 2, 9])
-                    with cols[0]:
-                        if idx < len(trace) - 1:
-                            st.markdown(
-                                f"""<div style="text-align:center;font-size:1.8rem">{icon_map[tx_type]}</div>
-                                <div style="width:2px;height:40px;background:{color};margin:0 auto"></div>""",
-                                unsafe_allow_html=True,
-                            )
-                        else:
-                            st.markdown(
-                                f"""<div style="text-align:center;font-size:1.8rem">{icon_map[tx_type]}</div>""",
-                                unsafe_allow_html=True,
-                            )
-
-                    with cols[1]:
-                        st.markdown(
-                            f"""<span style="background:{color};color:white;padding:2px 8px;border-radius:4px;font-size:0.75rem">{record['tx_type_label']}</span>""",
-                            unsafe_allow_html=True,
-                        )
-                        st.caption(record["timestamp_str"])
-
-                    with cols[2]:
-                        st.markdown(
-                            f"""<div style="background:#1a1a2e;padding:0.8rem;border-radius:8px;margin-bottom:0.5rem">""",
-                            unsafe_allow_html=True,
-                        )
-                        # 显示关键信息
-                        key_fields = {
-                            "production": ["producer", "origin", "quality_grade", "certification"],
-                            "processing": ["processor", "process_type", "quality_check", "facility"],
-                            "logistics": ["logistics_provider", "transport_mode", "departure", "destination"],
-                            "sale": ["seller", "store", "selling_price", "shelf_date"],
-                        }
-                        for field in key_fields.get(tx_type, []):
-                            val = tx_data.get(field, "")
-                            if val:
-                                label_map = {
-                                    "producer": "生产�?, "origin": "产地", "quality_grade": "品质等级",
-                                    "certification": "认证", "processor": "加工�?, "process_type": "加工类型",
-                                    "quality_check": "质检", "facility": "设施",
-                                    "logistics_provider": "物流�?, "transport_mode": "运输方式",
-                                    "departure": "出发�?, "destination": "目的�?,
-                                    "seller": "销售商", "store": "门店", "selling_price": "售价",
-                                    "shelf_date": "上架日期",
-                                }
-                                st.markdown(f"**{label_map.get(field, field)}**: {val}")
-                        st.markdown(f"<div style='font-size:0.75rem;color:#666;margin-top:0.3rem'>区块 #{record['block_index']} | <code>{record['block_hash'][:16]}...</code></div>", unsafe_allow_html=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                st.divider()
-                st.subheader("📋 完整追溯数据")
-                df = pd.DataFrame(
-                    [
-                        {
-                            "环节": r["tx_type_label"],
-                            "时间": r["timestamp_str"],
-                            "区块": f"#{r['block_index']}",
-                            "交易ID": r["tx_id"][:12] + "...",
-                        }
-                        for r in trace
-                    ]
-                )
-                st.dataframe(df, width='stretch', hide_index=True)
-
-                st.success(
-                    f"�?该产品共经过 **{len(trace)} 个环�?*，所有记录均已上链存储，"
-                    f"数据不可篡改，可完整追溯�?
-                )
+    with left:
+        st.subheader("🧊 冷链温控核验")
+        logistics = next((r for r in records if r["tx_type"] == "logistics"), None)
+        if logistics is None:
+            st.info("该产品没有物流环节记录")
+        else:
+            report = sc.cold_chain_report(logistics["tx"])
+            if not report["applicable"]:
+                st.info(report["note"])
             else:
-                st.warning("未找到该产品的追溯记�?)
-    st.divider()
-    st.caption("💡 提示：区块链溯源确保每一条记录都不可篡改，消费者可以放心查验产品的完整流通过程�?)
-
-# ══════════════════════════════════════════════════════════�?
-# 页面 3: 添加交易
-# ══════════════════════════════════════════════════════════�?
-elif page == "�?添加交易":
-    st.title("�?添加交易")
-    st.markdown("向区块链提交新的供应链交易记录（需要挖矿后才能打包入链�?)
-
-    tx_type = st.selectbox(
-        "选择交易类型",
-        [
-            ("production", "🌾 生产记录 - 农产品种�?养殖信息"),
-            ("processing", "🏭 加工记录 - 分拣/加工/包装信息"),
-            ("logistics", "🚚 物流记录 - 运输/仓储信息"),
-            ("sale", "🏪 销售记�?- 销�?上架信息"),
-        ],
-        format_func=lambda x: x[1],
-    )
-
-    tx_type_key = tx_type[0]
-
-    # 选择已有产品或新�?
-    existing_products = get_product_list(bc)
-    use_existing = st.checkbox("选择已有产品", value=True if existing_products else False)
-
-    if use_existing and existing_products:
-        product_id = st.selectbox("选择产品", existing_products)
-    else:
-        product_id = st.text_input("产品ID", value=f"PROD-{random.randint(1000,9999)}-{datetime.now().year}")
-
-    product_name = st.text_input("产品名称")
-
-    # 根据交易类型展示不同表单
-    data = {"product_id": product_id, "product_name": product_name}
-
-    if tx_type_key == "production":
-        c1, c2 = st.columns(2)
-        with c1:
-            data["category"] = st.selectbox("产品类别", ["水果", "蔬菜", "粮食", "茶叶", "肉类", "乳制�?, "水产�?])
-            data["producer"] = st.text_input("生产者名�?, value="阳光生态农�?)
-            data["origin"] = st.text_input("产地", value="黑龙江省五常�?)
-            data["planting_date"] = st.date_input("种植/生产日期").strftime("%Y-%m-%d")
-        with c2:
-            data["harvest_date"] = st.date_input("收获/采集日期").strftime("%Y-%m-%d")
-            data["batch_number"] = st.text_input("批号", value=f"BATCH-{random.randint(1000,9999)}")
-            data["quality_grade"] = st.selectbox("品质等级", ["特级", "一�?, "二级", "合格"])
-            data["certification"] = st.text_input("认证信息", value="有机认证 GB/T 19630")
-        data["notes"] = st.text_area("备注", value="采用生态种植方式，无农药残�?)
-
-    elif tx_type_key == "processing":
-        c1, c2 = st.columns(2)
-        with c1:
-            data["processor"] = st.text_input("加工商名�?, value="鲜品加工�?)
-            data["process_type"] = st.text_input("加工类型", value="分拣·清洗·包装")
-            data["facility"] = st.text_input("加工设施", value="A区无菌加工车�?)
-        with c2:
-            data["processing_date"] = st.date_input("加工日期").strftime("%Y-%m-%d")
-            data["expiry_date"] = st.date_input("保质期至").strftime("%Y-%m-%d")
-            data["supervisor"] = st.text_input("负责�?, value="李明")
-        data["quality_check"] = st.text_area("质检结果", value="已通过食品安全检测，符合 GB 2762-2022 标准")
-
-    elif tx_type_key == "logistics":
-        c1, c2 = st.columns(2)
-        with c1:
-            data["logistics_provider"] = st.text_input("物流商名�?, value="顺达冷链物流")
-            data["transport_mode"] = st.text_input("运输方式", value="冷链运输 (0-4°C)")
-            data["departure"] = st.text_input("出发�?, value="黑龙江省哈尔滨市")
-            data["vehicle_number"] = st.text_input("车牌�?, value=f"京A·{random.randint(10000,99999)}")
-        with c2:
-            data["destination"] = st.text_input("目的�?, value="北京市朝阳区")
-            data["shipment_date"] = st.date_input("发货日期").strftime("%Y-%m-%d")
-            data["estimated_arrival"] = st.date_input("预计到达").strftime("%Y-%m-%d")
-            data["temperature_range"] = st.text_input("温度范围", value="0~4°C")
-        data["tracking_number"] = st.text_input("运单�?, value=f"SF-{random.randint(100000,999999)}")
-
-    elif tx_type_key == "sale":
-        c1, c2 = st.columns(2)
-        with c1:
-            data["seller"] = st.text_input("销售商名称", value="盒马鲜生")
-            data["store"] = st.text_input("销售门�?, value="盒马鲜生·北京朝阳�?)
-            data["selling_price"] = st.text_input("售价", value="29.9�?500g")
-        with c2:
-            data["shelf_date"] = st.date_input("上架日期").strftime("%Y-%m-%d")
-            data["stock_quantity"] = st.number_input("库存�?, min_value=1, value=1000)
-            data["promotion"] = st.text_input("促销信息", value="新品上架促销")
-
-    if st.button("📤 提交交易", type="primary", width='stretch'):
-        tx = Transaction(tx_type_key, data)
-        bc.add_transaction(tx)
-        _save_blockchain()
-        st.success(f"�?交易已提交！交易ID: `{tx.tx_id[:20]}...`")
-        st.info("�?交易暂存在待处理池中，请前往「⛏�?挖矿打包」页面将交易打包入链�?)
-        st.balloons()
-
-# ══════════════════════════════════════════════════════════�?
-# 页面 4: 挖矿打包
-# ══════════════════════════════════════════════════════════�?
-elif page == "⛏️ 挖矿打包":
-    st.title("⛏️ 挖矿打包")
-    st.markdown("将待处理的交易打包成新区块并加入区块链（工作量证�?PoW�?)
-
-    pending = bc.pending_transactions
-    if pending:
-        st.warning(f"📦 当前�?**{len(pending)} �?* 交易等待打包")
-
-        for i, tx in enumerate(pending):
-            render_tx_card(tx.to_dict(), i)
-
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("⛏️ 开始挖�?, type="primary", width='stretch', key="mine_btn"):
-                with st.status("⛏️ 正在挖矿中，请稍�?..", expanded=True) as status:
-                    progress_bar = st.progress(0)
-                    for pct in range(10, 101, 10):
-                        time.sleep(0.15)
-                        progress_bar.progress(pct)
-                        if pct <= 30:
-                            st.write(f"🔄 正在计算哈希... ({pct}%)")
-                        elif pct <= 60:
-                            st.write(f"🔍 寻找有效 Nonce... ({pct}%)")
-                        elif pct <= 90:
-                            st.write(f"�?满足难度目标! ({pct}%)")
-                        else:
-                            st.write(f"📦 打包完成! ({pct}%)")
-
-                    new_block = bc.mine_pending_transactions()
-                    _save_blockchain()
-                    status.update(label="�?挖矿成功�?, state="complete")
-
-                st.success(f"🎉 新区块已生成�?)
-                c1, c2, c3 = st.columns(3)
-                c1.metric("区块高度", f"#{new_block.index}")
-                c2.metric("交易数量", len(new_block.transactions))
-                c3.metric("Nonce", new_block.nonce)
-                st.code(f"区块哈希: {new_block.hash}", language="text")
-                st.code(f"前置哈希: {new_block.previous_hash}", language="text")
-                st.balloons()
-
-        with col2:
-            if st.button("🗑�?清空待处�?, width='stretch'):
-                bc.pending_transactions = []
-                st.rerun()
-    else:
-        st.info("�?目前没有待处理的交易，请先前往「➕ 添加交易」页面创建交易�?)
-
-    # 显示挖矿原理
-    with st.expander("💡 什么是工作量证�?PoW)�?, expanded=False):
-        st.markdown(
-            """
-            **工作量证�?(Proof of Work)** 是区块链的核心共识机制之一�?
-
-            1. **数学难题**：矿工需要找到一�?`Nonce` 值，使得区块哈希以特定数量的 `0` 开�?
-            2. **难度调整**：当前难度为 `4`，即哈希必须以前 `4` 个字符为 `0`
-            3. **概率�?*：只能通过暴力枚举找到答案，无法取�?
-            4. **不可逆�?*：验证极易（一次哈希计算），但求解极难（大量尝试）
-            5. **安全意义**：篡改一个区块需要重新计算该区块及之后所有区块，成本极高
-
-            ```
-            目标: hash[:4] == "0000"
-            示例: 0000a1b2c3d4e5f6...
-            ```
-            """
-        )
-
-# ══════════════════════════════════════════════════════════�?
-# 页面 5: 链验�?
-# ══════════════════════════════════════════════════════════�?
-elif page == "�?链验�?:
-    st.title("�?区块链完整性验�?)
-    st.markdown("验证区块链的完整性和一致性，检测是否有数据被篡改�?)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("区块总数", stats["block_count"])
-    c2.metric("总交易数", stats["total_transactions"])
-    c3.metric("挖矿难度", stats["difficulty"])
-
-    if st.button("🔍 执行完整性验�?, type="primary", width='stretch'):
-        with st.status("正在验证区块�?..", expanded=True) as status:
-            time.sleep(0.5)
-            st.write("📋 步骤 1/3: 验证区块哈希一致�?..")
-            time.sleep(0.3)
-            st.write("🔗 步骤 2/3: 验证链式哈希链接...")
-            time.sleep(0.3)
-            st.write("⛏️ 步骤 3/3: 验证工作量证�?..")
-            time.sleep(0.3)
-
-            is_valid, message = bc.is_chain_valid()
-            status.update(label="验证完成", state="complete")
-
-        if is_valid:
-            st.success(f"## �?{message}")
-            st.balloons()
-        else:
-            st.error(f"## �?{message}")
-
-        st.markdown("### 📊 验证详情")
-        details = []
-        for i, block in enumerate(bc.chain):
-            bd = block.to_dict()
-            calc_hash = block.calculate_hash()
-            hash_ok = bd["hash"] == calc_hash
-            prev_ok = i == 0 or bd["previous_hash"] == bc.chain[i - 1].hash
-            pow_ok = bd["hash"].startswith("0" * bc.difficulty)
-
-            details.append({
-                "区块": f"#{bd['index']}",
-                "哈希一�?: "�? if hash_ok else "�?,
-                "链式链接": "�? if prev_ok else "�?,
-                "工作量证�?: "�? if pow_ok else "�?,
-                "交易�?: bd["tx_count"],
-                "Nonce": bd["nonce"],
-            })
-
-        st.dataframe(pd.DataFrame(details), width='stretch', hide_index=True)
-
-    st.divider()
-
-    st.subheader("🔬 篡改模拟")
-    st.markdown("选择一个区块，模拟篡改其数据，观察区块链如何检测到异常�?)
-
-    block_indices = [b.index for b in bc.chain if b.index > 0]
-    if block_indices:
-        target_block = st.selectbox(
-            "选择要篡改的区块（模拟攻击）",
-            block_indices,
-            format_func=lambda x: f"区块 #{x}",
-        )
-
-        if st.button("⚠️ 模拟篡改", type="secondary", width='stretch'):
-            block = bc.chain[target_block]
-            block.transactions[0].data["product_name"] = "[已篡改] 假冒产品"
-
-            is_valid_after, msg_after = bc.is_chain_valid()
-            if not is_valid_after:
-                st.error("### 🚨 篡改已检测到�?)
-                st.markdown(
-                    f"""
-                    ```
-                    检测结�? {msg_after}
-                    
-                    说明: 当区�?#{target_block} 的数据被篡改后，该区块的哈希发生变化�?
-                    导致其后所有区块的"前置哈希"与之不匹配，区块链完整性被破坏�?
-                    ```
-                    """
-                )
-            st.warning("⚠️ 提示：篡改仅在当前内存中生效，本地保存的数据不受影响。点击「�?重新加载本地数据」可恢复�?)
-    else:
-        st.info("没有可篡改的区块（仅包含创世区块�?)
-
-# ══════════════════════════════════════════════════════════�?
-# 页面 6: 参与方管�?
-# ══════════════════════════════════════════════════════════�?
-elif page == "👥 参与方管�?:
-    st.title("👥 供应链参与方管理")
-    st.markdown("管理参与农产品供应链的所有实体（生产者、加工商、物流商、销售商�?)
-
-    col_list, col_add = st.columns([3, 2])
-
-    with col_list:
-        st.subheader("📋 已注册参与方")
-        if bc.participants:
-            participants_df = pd.DataFrame(
-                [
-                    {
-                        "ID": pid,
-                        "名称": info["name"],
-                        "角色": info["role"],
-                        "注册时间": info["registered_at"],
-                    }
-                    for pid, info in bc.participants.items()
-                ]
-            )
-            st.dataframe(participants_df, width='stretch', hide_index=True)
-
-            # 角色分布
-            role_counts = {}
-            for info in bc.participants.values():
-                role_counts[info["role"]] = role_counts.get(info["role"], 0) + 1
-
-            st.subheader("📊 角色分布")
-            role_df = pd.DataFrame(
-                {"角色": k, "数量": v} for k, v in role_counts.items()
-            )
-            st.dataframe(role_df, width='stretch', hide_index=True)
-        else:
-            st.info("暂无注册的参与方")
-
-    with col_add:
-        st.subheader("�?注册新参与方")
-        with st.form("register_form"):
-            pid = st.text_input("参与方ID", value=f"party_{random.randint(100,999)}")
-            name = st.text_input("名称", placeholder="例如: 阳光生态农�?)
-            role = st.selectbox("角色", ["生产�?, "加工�?, "物流�?, "销售商", "质检机构", "监管机构"])
-            submitted = st.form_submit_button("注册", type="primary", width='stretch')
-
-            if submitted and pid and name:
-                if pid in bc.participants:
-                    st.error(f"参与方ID '{pid}' 已存�?)
+                if report["compliant"]:
+                    st.success(
+                        f"全程温控达标（要求 {report['range'][0]}~{report['range'][1]}°C，"
+                        f"采样均值 {report['average']:.2f}°C）",
+                        icon="✅",
+                    )
                 else:
-                    bc.register_participant(pid, name, role)
-                    _save_blockchain()
-                    st.success(f"�?参与�?'{name}' 注册成功�?)
-                    st.rerun()
+                    st.error(
+                        f"检出 {len(report['violations'])} 次超出温控范围 "
+                        f"（要求 {report['range'][0]}~{report['range'][1]}°C，"
+                        f"越限采样 {report['violations']}）",
+                        icon="🌡️",
+                    )
+                if report["readings"]:
+                    temp_fig = go.Figure()
+                    temp_fig.add_scatter(
+                        y=report["readings"],
+                        mode="lines+markers",
+                        name="在途温度",
+                        line=dict(color="#1565c0", width=2),
+                    )
+                    temp_fig.add_hrect(
+                        y0=report["range"][0],
+                        y1=report["range"][1],
+                        fillcolor="#43a047",
+                        opacity=0.12,
+                        line_width=0,
+                        annotation_text="允许区间",
+                    )
+                    temp_fig.update_layout(
+                        height=260,
+                        margin=dict(l=10, r=10, t=20, b=10),
+                        yaxis_title="温度 (°C)",
+                        xaxis_title="采样点",
+                    )
+                    st.plotly_chart(temp_fig, width="stretch")
+
+    with right:
+        st.subheader("⏳ 保质期状态")
+        processing = next((r for r in records if r["tx_type"] == "processing"), None)
+        expiry = processing["data"].get("expiry_date") if processing else None
+        status = sc.expiry_status(expiry)
+        st.markdown(
+            f'<span class="pill" style="background:{status["color"]}22;'
+            f'color:{status["color"]}">{status["label"]}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"保质期截止日：{status['expiry_date'] or '—'}")
+
+        if len(records) >= 2:
+            st.subheader("🌡️ 环节间温度/日期序列")
+            timeline_rows = [
+                {
+                    "环节": TRANSACTION_TYPES.get(r["tx_type"], r["tx_type"]),
+                    "上链时间": r["block_time"],
+                    "所在区块": r["block_index"],
+                }
+                for r in records
+            ]
+            st.dataframe(
+                pd.DataFrame(timeline_rows), width="stretch", hide_index=True
+            )
 
     st.divider()
-    st.subheader("🔗 供应链网络关系图")
-    st.markdown(
-        """
-        本系统模拟了以下供应链网络：
+    st.subheader("🧾 溯源证书")
+    html = sc.build_trace_html(chain, selected, records)
+    dl, preview = st.columns([1, 1])
+    with dl:
+        st.download_button(
+            "⬇️ 下载溯源证书（HTML）",
+            data=html.encode("utf-8"),
+            file_name=f"溯源证书-{selected}.html",
+            mime="text/html",
+            width="stretch",
+        )
+    with preview:
+        st.caption("证书为自包含 HTML，可离线查看或打印为 PDF。")
+    with st.expander("👁️ 预览证书"):
+        st.html(html)
 
-        ```
-        🌾 生产�?──�?🏭 加工�?──�?🚚 物流�?──�?🏪 销售商 ──�?👤 消费�?
-        (农场)        (加工�?       (冷链物流)     (商超/电商)    (终端用户)
-        ```
+    st.divider()
+    st.subheader("🔐 Merkle 存在性证明")
+    st.caption(
+        "Merkle 树让「某笔交易确实被打包进某个区块」可以在不下载整块数据的前提下被验证。"
+    )
+    pick = st.selectbox(
+        "选择要验证的交易",
+        options=list(range(len(records))),
+        format_func=lambda i: (
+            f"{TRANSACTION_TYPES.get(records[i]['tx_type'], records[i]['tx_type'])}"
+            f" · {records[i]['tx_id'][:20]}…"
+        ),
+    )
+    record = records[pick]
+    block = chain.get_block(record["block_index"])
+    if block is None:
+        st.error("区块不存在")
+        return
 
-        **溯源链路**: 消费者扫描二维码 �?获取产品ID �?区块链查�?�?全链路展�?
-        """
+    tx_ids = block.tx_ids
+    proof = block.proof_for(record["tx_index"])
+    root = compute_merkle_root(tx_ids)
+    verified = verify_merkle_proof(record["tx_id"], proof, root)
+
+    proof_rows = [
+        {"层级": level, "兄弟哈希": sibling[:32] + "…", "位置": "左" if is_left else "右"}
+        for level, (sibling, is_left) in enumerate(proof)
+    ]
+    pc = st.columns([1, 2])
+    pc[0].metric("验证结果", "通过 ✅" if verified else "失败 ❌")
+    pc[0].metric("证明路径长度", len(proof))
+    with pc[1]:
+        st.write(f"**区块 Merkle 根：** `{root}`")
+        st.write(f"**区块记录哈希：** `{block.hash}`")
+        st.caption(f"Merkle 根是否与区块一致：{'✅' if block.merkle_root == root else '❌'}")
+    if proof_rows:
+        st.dataframe(pd.DataFrame(proof_rows), width="stretch", hide_index=True)
+
+
+# ── 页面 3：冷链与保质期 ────────────────────────────────────────────────────
+
+
+def page_cold_chain() -> None:
+    st.header("🧊 冷链温控与保质期预警")
+    st.caption("基于链上物流与加工记录计算，属于业务侧派生指标，不改变链上数据。")
+
+    chain = get_chain()
+    products = chain.get_product_list()
+    if not products:
+        st.warning("链上暂无产品记录。")
+        return
+
+    logistics_rows: List[Dict[str, Any]] = []
+    expiry_rows: List[Dict[str, Any]] = []
+
+    for pid in products:
+        records = chain.trace_product(pid)
+        name = records[0]["data"].get("product_name", pid) if records else pid
+        logistics = next((r for r in records if r["tx_type"] == "logistics"), None)
+        processing = next((r for r in records if r["tx_type"] == "processing"), None)
+
+        if logistics is not None:
+            report = sc.cold_chain_report(logistics["tx"])
+            logistics_rows.append(
+                {
+                    "产品": name,
+                    "产品编号": pid,
+                    "温控要求": report["range_text"] if report["applicable"] else "—",
+                    "采样数": len(report["readings"]),
+                    "最低": report["min"],
+                    "最高": report["max"],
+                    "均值": (
+                        round(report["average"], 2)
+                        if report["average"] is not None
+                        else None
+                    ),
+                    "越限次数": len(report["violations"]),
+                    "是否合规": (
+                        bool_cell(report["compliant"]) if report["applicable"] else "—"
+                    ),
+                    "_compliant": report["compliant"] if report["applicable"] else None,
+                }
+            )
+
+        if processing is not None:
+            status = sc.expiry_status(processing["data"].get("expiry_date"))
+            expiry_rows.append(
+                {
+                    "产品": name,
+                    "产品编号": pid,
+                    "截止日": status["expiry_date"] or "—",
+                    "剩余天数": status["days"],
+                    "预警等级": status["label"],
+                    "_level": status["level"],
+                }
+            )
+
+    tab1, tab2 = st.tabs(["🌡️ 冷链合规", "⏳ 保质期预警"])
+
+    with tab1:
+        if not logistics_rows:
+            st.info("暂无物流记录")
+        else:
+            compliant = sum(1 for r in logistics_rows if r["_compliant"] is True)
+            total = sum(1 for r in logistics_rows if r["_compliant"] is not None)
+            cols = st.columns(3)
+            cols[0].metric("受检产品", total)
+            cols[1].metric("合规产品", compliant)
+            cols[2].metric(
+                "合规率", f"{(compliant / total * 100):.0f}%" if total else "—"
+            )
+            display = [
+                {k: v for k, v in row.items() if not k.startswith("_")}
+                for row in logistics_rows
+            ]
+            st.dataframe(pd.DataFrame(display), width="stretch", hide_index=True)
+
+            chart_rows = [r for r in logistics_rows if r["采样数"] > 0]
+            if chart_rows:
+                fig = go.Figure()
+                for row in chart_rows:
+                    records = chain.trace_product(row["产品编号"])
+                    logistics = next(
+                        (r for r in records if r["tx_type"] == "logistics"), None
+                    )
+                    if logistics is None:
+                        continue
+                    report = sc.cold_chain_report(logistics["tx"])
+                    fig.add_scatter(
+                        y=report["readings"],
+                        mode="lines+markers",
+                        name=row["产品"],
+                    )
+                fig.update_layout(
+                    height=340,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    yaxis_title="温度 (°C)",
+                    xaxis_title="采样点",
+                )
+                st.plotly_chart(fig, width="stretch")
+
+    with tab2:
+        if not expiry_rows:
+            st.info("暂无加工记录")
+        else:
+            order = {"expired": 0, "critical": 1, "warning": 2, "ok": 3, "unknown": 4}
+            expiry_rows.sort(key=lambda r: order.get(r["_level"], 9))
+            counts = {"expired": 0, "critical": 0, "warning": 0, "ok": 0}
+            for row in expiry_rows:
+                if row["_level"] in counts:
+                    counts[row["_level"]] += 1
+            cols = st.columns(4)
+            cols[0].metric("已过期", counts["expired"])
+            cols[1].metric("3 天内到期", counts["critical"])
+            cols[2].metric("14 天内到期", counts["warning"])
+            cols[3].metric("状态正常", counts["ok"])
+
+            display = [
+                {k: v for k, v in row.items() if not k.startswith("_")}
+                for row in expiry_rows
+            ]
+            st.dataframe(
+                pd.DataFrame(display),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "剩余天数": st.column_config.NumberColumn("剩余天数", format="%d 天"),
+                },
+            )
+
+
+# ── 页面 4：添加交易 ────────────────────────────────────────────────────────
+
+#: 表单字段按类型的区分（核心字段来自 blockchain.REQUIRED_FIELDS）
+CORE_FIELDS: Dict[str, List[str]] = {
+    "production": ["product_id", "product_name", "producer", "producer_id", "origin"],
+    "processing": ["product_id", "product_name", "processor", "processor_id", "process_type"],
+    "logistics": [
+        "product_id",
+        "product_name",
+        "logistics_provider",
+        "logistics_id",
+        "departure",
+        "destination",
+    ],
+    "sale": ["product_id", "product_name", "seller", "seller_id", "store"],
+}
+
+OPTIONAL_FIELDS: Dict[str, List[str]] = {
+    "production": [
+        "category",
+        "planting_date",
+        "harvest_date",
+        "batch_number",
+        "quality_grade",
+        "certification",
+        "planting_area_mu",
+        "soil_ph",
+        "notes",
+    ],
+    "processing": [
+        "category",
+        "processing_date",
+        "expiry_date",
+        "facility",
+        "batch_number",
+        "supervisor",
+        "quality_check",
+        "additives",
+        "notes",
+    ],
+    "logistics": [
+        "category",
+        "transport_mode",
+        "shipment_date",
+        "estimated_arrival",
+        "tracking_number",
+        "temperature_range",
+        "temperature_readings",
+        "vehicle_number",
+        "notes",
+    ],
+    "sale": [
+        "category",
+        "shelf_date",
+        "selling_price",
+        "stock_quantity",
+        "promotion",
+        "notes",
+    ],
+}
+
+DATE_FIELDS = {
+    "planting_date",
+    "harvest_date",
+    "processing_date",
+    "expiry_date",
+    "shipment_date",
+    "estimated_arrival",
+    "shelf_date",
+}
+NUMBER_FIELDS = {"planting_area_mu", "soil_ph", "stock_quantity"}
+LIST_FIELDS = {"temperature_readings"}
+TEXTAREA_FIELDS = {"notes"}
+
+#: 参与方下拉框按交易类型匹配的角色
+ROLE_BY_TYPE = {
+    "production": "生产者",
+    "processing": "加工商",
+    "logistics": "物流商",
+    "sale": "销售商",
+}
+#: 核心字段里可以直接由参与方选择填充的映射
+PARTICIPANT_BINDING = {
+    "producer": ("name", None),
+    "producer_id": ("id", None),
+    "processor": ("name", None),
+    "processor_id": ("id", None),
+    "logistics_provider": ("name", None),
+    "logistics_id": ("id", None),
+    "seller": ("name", None),
+    "seller_id": ("id", None),
+    "store": ("name", None),
+}
+BINDING_FIELD = {
+    "production": "producer",
+    "processing": "processor",
+    "logistics": "logistics_provider",
+    "sale": "seller",
+}
+
+
+def _parse_date(text: Any) -> Optional[date]:
+    try:
+        return datetime.strptime(str(text)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_field(field: str, tx_type: str, key: str, default: Any) -> Any:
+    """按字段类型渲染合适的输入控件。"""
+    label, unit = sc.FIELD_LABELS.get(field, (field, ""))
+    shown = f"{label}（{unit}）" if unit else label
+
+    if field in DATE_FIELDS:
+        parsed = _parse_date(default) or date.today()
+        picked = st.date_input(shown, value=parsed, key=key)
+        return picked.strftime("%Y-%m-%d")
+    if field in NUMBER_FIELDS:
+        base = float(default) if isinstance(default, (int, float)) else 0.0
+        step = 0.1 if field == "soil_ph" else 1.0
+        value = st.number_input(shown, value=base, step=step, key=key)
+        return int(value) if field != "soil_ph" else float(value)
+    if field in LIST_FIELDS:
+        text = st.text_input(
+            f"{shown}（逗号分隔）",
+            value=", ".join(str(v) for v in default) if isinstance(default, list) else "",
+            key=key,
+            placeholder="例如：2.1, 1.8, 3.4",
+        )
+        values: List[float] = []
+        for piece in text.replace("，", ",").split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            try:
+                values.append(float(piece))
+            except ValueError:
+                st.warning(f"无法解析温度采样值：{piece}")
+        return values
+    if field in TEXTAREA_FIELDS:
+        return st.text_area(shown, value=str(default or ""), key=key, height=80)
+
+    return st.text_input(shown, value=str(default or ""), key=key)
+
+
+def page_add_transaction() -> None:
+    st.header("➕ 上链新交易")
+    st.caption("提交后进入待处理池，需到「挖矿中心」打包进区块才算真正上链。")
+
+    chain = get_chain()
+    tx_type = st.radio(
+        "交易类型",
+        options=list(TRANSACTION_TYPES),
+        format_func=lambda t: f"{CHAIN_ICON.get(t, '')} {TRANSACTION_TYPES[t]}",
+        horizontal=True,
     )
 
-# ─── 页脚 ──────────────────────────────────────────────────
-st.sidebar.divider()
-st.sidebar.caption(
-    """
-    🔗 **区块链溯源系�?v1.0**
-    
-    技术栈:
-    - Python + Streamlit
-    - SHA-256 哈希算法
-    - 工作量证�?(PoW)
-    
-    �?仅供演示与学习使�?
-    """
-)
+    role = ROLE_BY_TYPE[tx_type]
+    candidates = [
+        (pid, info)
+        for pid, info in chain.participants.items()
+        if info.get("role") == role
+    ]
+    known_products = chain.get_product_list()
+
+    with st.form("add_tx_form", clear_on_submit=False):
+        st.subheader("必填信息")
+        core_cols = st.columns(2)
+        core_values: Dict[str, Any] = {}
+
+        for index, field in enumerate(CORE_FIELDS[tx_type]):
+            column = core_cols[index % 2]
+            with column:
+                if field in ("product_id", "product_name") and known_products:
+                    if field == "product_id":
+                        choice = st.selectbox(
+                            sc.label_for(field),
+                            options=["<新建产品>"] + known_products,
+                            key=f"core_{tx_type}_{field}",
+                        )
+                        if choice == "<新建产品>":
+                            core_values[field] = st.text_input(
+                                "新产品编号", key=f"core_{tx_type}_{field}_new"
+                            )
+                        else:
+                            core_values[field] = choice
+                    else:
+                        pid_selected = core_values.get("product_id", "")
+                        guess = ""
+                        if pid_selected and pid_selected in known_products:
+                            recs = chain.trace_product(pid_selected)
+                            if recs:
+                                guess = recs[0]["data"].get("product_name", "")
+                        core_values[field] = st.text_input(
+                            sc.label_for(field),
+                            value=guess,
+                            key=f"core_{tx_type}_{field}",
+                        )
+                    continue
+
+                if field in PARTICIPANT_BINDING and candidates:
+                    bound = BINDING_FIELD.get(tx_type)
+                    options = ["<手动输入>"] + [
+                        f"{info['name']}（{pid}）" for pid, info in candidates
+                    ]
+                    picked = st.selectbox(
+                        sc.label_for(field), options=options, key=f"core_{tx_type}_{field}"
+                    )
+                    if picked == "<手动输入>":
+                        core_values[field] = st.text_input(
+                            "手动填写", key=f"core_{tx_type}_{field}_manual"
+                        )
+                    else:
+                        # 「名称」类字段取括号前的名称，「编号」类字段取括号内的 ID
+                        as_name = field in ("store", bound)
+                        core_values[field] = (
+                            picked.split("（")[0]
+                            if as_name
+                            else picked.split("（")[-1].rstrip("）")
+                        )
+                    continue
+
+                core_values[field] = st.text_input(
+                    sc.label_for(field), key=f"core_{tx_type}_{field}"
+                )
+
+        st.subheader("可选信息")
+        optional_values: Dict[str, Any] = {}
+        opt_cols = st.columns(2)
+        for index, field in enumerate(OPTIONAL_FIELDS[tx_type]):
+            column = opt_cols[index % 2]
+            with column:
+                optional_values[field] = _render_field(
+                    field, tx_type, f"opt_{tx_type}_{field}", None
+                )
+
+        pending = st.checkbox("直接送入待处理池（不上链，稍后手动挖矿）", value=True)
+        submitted = st.form_submit_button("📥 提交交易", width="stretch")
+
+    if submitted:
+        data = {k: v for k, v in core_values.items() if v not in ("", None)}
+        for key, value in optional_values.items():
+            if value in ("", None, []):
+                continue
+            data[key] = value
+
+        missing = [
+            field
+            for field in REQUIRED_FIELDS[tx_type]
+            if not data.get(field)
+        ]
+        if missing:
+            st.error(
+                "缺少必填字段：" + "、".join(sc.label_for(f) for f in missing)
+            )
+            return
+
+        try:
+            tx = Transaction(tx_type, data)
+        except (TypeError, ValueError) as error:
+            st.error(f"交易构造失败：{error}")
+            return
+
+        try:
+            tx_id = chain.add_transaction(tx)
+        except ValueError as error:
+            st.error(f"上链被拒绝：{error}")
+            return
+
+        st.success(f"交易已送入待处理池，交易 ID：`{tx_id}`")
+
+        if not pending:
+            with st.spinner("正在挖矿打包…"):
+                block = chain.mine_pending_transactions()
+            st.success(f"已打包进区块 #{block.index}，Nonce={block.nonce}")
+        persist_chain()
+        st.rerun()
+
+    st.divider()
+    st.subheader("📋 待处理池")
+    if chain.pending_transactions:
+        st.caption(f"当前有 {len(chain.pending_transactions)} 笔交易等待打包。")
+        for position, tx in enumerate(chain.pending_transactions):
+            with st.expander(
+                f"{CHAIN_ICON.get(tx.tx_type, '')} {tx.tx_type_label} · "
+                f"{tx.data.get('product_name', tx.tx_id[:16])}"
+            ):
+                st.json(tx.to_dict())
+    else:
+        st.info("待处理池为空。")
+
+
+# ── 页面 5：挖矿中心 ────────────────────────────────────────────────────────
+
+
+def page_mining() -> None:
+    st.header("⛏️ 挖矿中心")
+    st.caption("工作量证明（PoW）通过暴力搜索 nonce 使区块哈希满足前导零要求。")
+
+    chain = get_chain()
+    pending = chain.pending_transactions
+
+    cols = st.columns(4)
+    cols[0].metric("待打包交易", len(pending))
+    cols[1].metric("当前难度", chain.difficulty)
+    cols[2].metric("目标前导零", "0" * chain.difficulty)
+    cols[3].metric("自动调难度", "开" if chain.auto_adjust else "关")
+
+    st.divider()
+    config_col, action_col = st.columns([2, 1])
+
+    with config_col:
+        difficulty = st.slider(
+            "挖矿难度（前导零个数）",
+            min_value=1,
+            max_value=6,
+            value=int(chain.difficulty),
+            help="每增加 1，期望哈希尝试次数约变为 16 倍。",
+        )
+        miner = st.text_input("矿工标识", value="system")
+        auto = st.checkbox(
+            "自动调整难度（按出块速度）",
+            value=chain.auto_adjust,
+            help=f"目标出块时间 {Blockchain.TARGET_BLOCK_SECONDS}s，"
+            f"每 {Blockchain.ADJUST_EVERY} 块评估一次，"
+            f"难度限定在 {Blockchain.MIN_DIFFICULTY}~{Blockchain.MAX_DIFFICULTY}。",
+        )
+
+    with action_col:
+        st.write("")
+        st.write("")
+        if st.button("⚙️ 应用难度设置", width="stretch"):
+            chain.difficulty = int(difficulty)
+            chain.auto_adjust = bool(auto)
+            persist_chain()
+            st.rerun()
+
+    st.divider()
+    if st.button(
+        f"⛏️ 打包 {len(pending)} 笔交易并挖矿",
+        type="primary",
+        width="stretch",
+        disabled=not pending,
+    ):
+        progress = st.progress(0, text="正在计算工作量证明…")
+        try:
+            started = datetime.now()
+            block = chain.mine_pending_transactions(miner or "system")
+            elapsed = (datetime.now() - started).total_seconds()
+            progress.progress(100, text="挖矿完成")
+        except ValueError as error:
+            progress.empty()
+            st.error(str(error))
+            return
+
+        entry = chain.mining_log[-1]
+        st.success(
+            f"新区块 #{block.index} 已上链！Nonce={block.nonce}，"
+            f"尝试 {entry['attempts']:,} 次，耗时 {elapsed:.3f}s"
+        )
+        st.code(f"区块哈希：{block.hash}\n前一区块：{block.previous_hash}\nMerkle 根：{block.merkle_root}")
+        persist_chain()
+        st.rerun()
+
+    if not pending:
+        st.info("待处理池为空。可到「添加交易」页面提交数据。")
+
+    st.divider()
+    st.subheader("📊 挖矿历史")
+    if chain.mining_log:
+        frame = pd.DataFrame(
+            [
+                {
+                    "区块": e["index"],
+                    "矿工": e["miner"],
+                    "难度": e["difficulty"],
+                    "Nonce": e["nonce"],
+                    "尝试次数": e["attempts"],
+                    "耗时(秒)": e["duration_s"],
+                    "交易数": e["tx_count"],
+                }
+                for e in chain.mining_log
+            ]
+        )
+        st.dataframe(frame, width="stretch", hide_index=True)
+        if len(frame) > 1:
+            fig = go.Figure(
+                go.Bar(
+                    x=frame["区块"].astype(str),
+                    y=frame["尝试次数"],
+                    marker_color="#ef6c00",
+                    name="尝试次数",
+                )
+            )
+            fig.update_layout(
+                height=300,
+                margin=dict(l=10, r=10, t=20, b=10),
+                xaxis_title="区块",
+                yaxis_title="哈希尝试次数",
+            )
+            st.plotly_chart(fig, width="stretch")
+    else:
+        st.info("暂无挖矿记录")
+
+
+# ── 页面 6：区块浏览器 ──────────────────────────────────────────────────────
+
+
+def page_explorer() -> None:
+    st.header("🧱 区块浏览器")
+    chain = get_chain()
+
+    rows = []
+    for position, block in enumerate(chain.chain):
+        rows.append(
+            {
+                "高度": position,
+                "区块": block.index,
+                "交易数": len(block.transactions),
+                "难度": block.difficulty,
+                "Nonce": block.nonce,
+                "时间": datetime.fromtimestamp(block.timestamp).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "哈希": block.hash[:24] + "…",
+                "前一哈希": block.previous_hash[:24] + "…",
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    st.divider()
+    options = [b.index for b in chain.chain]
+    picked = st.selectbox(
+        "查看区块详情", options, format_func=lambda i: f"区块 #{i}"
+    )
+    block = chain.get_block(picked)
+    if block is None:
+        st.error("区块不存在")
+        return
+
+    cols = st.columns(4)
+    cols[0].metric("区块高度", block.index)
+    cols[1].metric("交易数", len(block.transactions))
+    cols[2].metric("难度", block.difficulty)
+    cols[3].metric("Nonce", block.nonce)
+
+    st.markdown("**区块哈希**")
+    st.code(block.hash)
+    st.markdown("**前一区块哈希**")
+    st.code(block.previous_hash)
+    st.markdown("**Merkle 根**")
+    st.code(block.merkle_root)
+
+    detail = {
+        "哈希一致": block.hash == block.calculate_hash(),
+        "工作量证明有效": block.satisfies_pow(),
+        "Merkle 根一致": block.merkle_root == compute_merkle_root(block.tx_ids),
+    }
+    st.write(
+        " · ".join(f"{key} {bool_cell(value)}" for key, value in detail.items())
+    )
+
+    with st.expander("🔬 哈希原文（可复算）", expanded=False):
+        st.caption("修改任意字段都会改变下列内容，从而改变区块哈希。")
+        st.json(block._hash_payload(block.nonce, block.merkle_root))
+
+    st.divider()
+    st.subheader(f"📄 区块内 {len(block.transactions)} 笔交易")
+    for position, tx in enumerate(block.transactions):
+        with st.expander(
+            f"{CHAIN_ICON.get(tx.tx_type, '')} {tx.tx_type_label} · "
+            f"{tx.data.get('product_name', '—')} · {tx.tx_id[:16]}…"
+        ):
+            st.json(tx.to_dict())
+            proof = block.proof_for(position)
+            st.caption(
+                f"Merkle 证明路径长度 {len(proof)}，"
+                f"验证结果：{'✅ 通过' if verify_merkle_proof(tx.tx_id, proof, block.merkle_root) else '❌ 失败'}"
+            )
+
+
+# ── 页面 7：链验证与篡改实验 ────────────────────────────────────────────────
+
+
+def page_verify() -> None:
+    st.header("🛡️ 链完整性验证与篡改实验")
+    chain = get_chain()
+
+    ok, message = chain.is_chain_valid()
+    if ok:
+        st.success(message, icon="🔒")
+    else:
+        st.error(message, icon="🚨")
+
+    st.subheader("🔎 逐块审计")
+    audit = chain.audit_chain()
+    display = [
+        {**row, "哈希": row["哈希"][:24] + "…", "哈希一致": bool_cell(row["哈希一致"]),
+         "链接正确": bool_cell(row["链接正确"]), "工作量证明": bool_cell(row["工作量证明"]),
+         "Merkle 根": bool_cell(row["Merkle 根"]), "交易合法": bool_cell(row["交易合法"]),
+         "通过": bool_cell(row["通过"])}
+        for row in audit
+    ]
+    st.dataframe(pd.DataFrame(display), width="stretch", hide_index=True)
+
+    st.divider()
+    st.subheader("🧪 篡改实验")
+    st.caption(
+        "直接修改链上某笔交易的字段，观察哈希与校验结果如何变化 —— "
+        "这就是「不可篡改」的实际含义：内容变则哈希变，哈希变则链断。"
+    )
+
+    blocks_with_tx = [b.index for b in chain.chain if b.transactions]
+    if not blocks_with_tx:
+        st.info("链上没有可篡改的交易")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        block_index = st.selectbox("选择区块", blocks_with_tx, key="tamper_block")
+    block = chain.get_block(block_index)
+    if block is None:
+        st.error("区块不存在")
+        return
+
+    with col2:
+        position = st.selectbox(
+            "选择交易",
+            options=list(range(len(block.transactions))),
+            format_func=lambda i: (
+                f"{TRANSACTION_TYPES.get(block.transactions[i].tx_type, '')} · "
+                f"{block.transactions[i].data.get('product_name', '—')}"
+            ),
+            key="tamper_pos",
+        )
+    target = block.transactions[position]
+
+    with col3:
+        field = st.selectbox(
+            "选择字段", sorted(target.data.keys()), key="tamper_field"
+        )
+
+    new_value = st.text_input(
+        "篡改为", value="【已被篡改】假冒商品", key="tamper_value"
+    )
+
+    act = st.columns(4)
+    if act[0].button("💥 执行篡改", type="primary", width="stretch"):
+        st.session_state["chain_backup"] = copy.deepcopy(chain)
+        result = chain.tamper_transaction(block_index, position, field, new_value)
+        st.session_state["tamper_result"] = result
+        st.rerun()
+
+    if act[1].button("🔁 恢复篡改前快照", width="stretch"):
+        backup = st.session_state.pop("chain_backup", None)
+        if backup is None:
+            st.warning("没有可恢复的快照")
+        else:
+            st.session_state["chain"] = backup
+            st.session_state.pop("tamper_result", None)
+            st.toast("已恢复到篡改前的状态", icon="🔁")
+            st.rerun()
+
+    if act[2].button("⛏️ 攻击者重挖本块", width="stretch"):
+        with st.spinner("攻击者重算本块的工作量证明…"):
+            nonce, attempts = block.mine(block.difficulty)
+        st.toast(f"本块已重挖：Nonce={nonce}，尝试 {attempts:,} 次", icon="⛏️")
+        st.rerun()
+
+    if act[3].button("💾 保存当前链", width="stretch"):
+        persist_chain()
+
+    result = st.session_state.get("tamper_result")
+    if result:
+        before, after = result["before"], result["after"]
+        st.divider()
+        st.markdown(f"#### 篡改字段：`{field}`")
+        compare = pd.DataFrame(
+            [
+                {"阶段": "篡改前", "字段值": fmt_value(field, before["value"]),
+                 "交易 ID": before["tx_id"][:24] + "…",
+                 "区块哈希": before["block_hash"][:24] + "…",
+                 "链是否有效": bool_cell(before["chain_valid"])},
+                {"阶段": "篡改后", "字段值": fmt_value(field, after["value"]),
+                 "交易 ID": after["tx_id"][:24] + "…",
+                 "区块哈希": after["block_hash"][:24] + "…",
+                 "链是否有效": bool_cell(after["chain_valid"])},
+            ]
+        )
+        st.dataframe(compare, width="stretch", hide_index=True)
+
+        info = st.columns(3)
+        tx_changed = before["tx_id"] != after["tx_id"]
+        info[0].metric("交易 ID 变化", bool_cell(tx_changed))
+        info[1].metric(
+            "区块哈希变化",
+            bool_cell(before["block_hash"] != after["block_hash"]),
+        )
+        info[2].metric("链校验结果", bool_cell(after["chain_valid"]))
+
+        if after.get("recalculated_hash"):
+            st.markdown("**按篡改后内容重算出的区块哈希**")
+            st.code(after["recalculated_hash"])
+            st.caption(
+                "该哈希与区块中记录的哈希不一致，所以校验立即失败。"
+                "若攻击者想让链重新有效，必须重挖本块，并且把后续所有区块的"
+                " `previous_hash` 一并重算 —— 这就是篡改成本极高的原因。"
+            )
+
+
+# ── 页面 8：参与方管理 ──────────────────────────────────────────────────────
+
+
+def page_participants() -> None:
+    st.header("🏢 参与方管理")
+    chain = get_chain()
+
+    rows = [
+        {
+            "编号": pid,
+            "名称": info.get("name", ""),
+            "角色": info.get("role", ""),
+            "类型": info.get("type", ""),
+            "所在地": info.get("location", ""),
+        }
+        for pid, info in sorted(chain.participants.items())
+    ]
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        counts: Dict[str, int] = {}
+        for row in rows:
+            counts[row["角色"]] = counts.get(row["角色"], 0) + 1
+        fig = go.Figure(
+            go.Bar(
+                x=list(counts),
+                y=list(counts.values()),
+                marker_color="#2e7d32",
+                text=list(counts.values()),
+                textposition="auto",
+            )
+        )
+        fig.update_layout(
+            height=300, margin=dict(l=10, r=10, t=20, b=10), yaxis_title="数量"
+        )
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.info("暂无参与方")
+
+    st.divider()
+    st.subheader("➕ 新增参与方")
+    with st.form("add_participant"):
+        cols = st.columns(2)
+        pid = cols[0].text_input("编号", placeholder="例如 farm_005")
+        name = cols[1].text_input("名称", placeholder="例如 青山果园")
+        cols2 = st.columns(3)
+        role = cols2[0].selectbox("角色", options=list(sc.ROLES))
+        kind = cols2[1].text_input("类型", placeholder="例如 种植基地")
+        location = cols2[2].text_input("所在地", placeholder="例如 山东省烟台市")
+        if st.form_submit_button("注册参与方", width="stretch"):
+            if not pid or not name:
+                st.error("编号与名称必填")
+            elif pid in chain.participants:
+                st.error(f"参与方 {pid} 已存在")
+            else:
+                chain.register_participant(
+                    pid, name, role, {"type": kind, "location": location}
+                )
+                persist_chain()
+                st.rerun()
+
+    st.subheader("🗑️ 移除参与方")
+    removable = sorted(chain.participants)
+    if removable:
+        pick = st.selectbox(
+            "选择要移除的参与方",
+            removable,
+            format_func=lambda p: f"{chain.participants[p].get('name', '')}（{p}）",
+        )
+        if st.button("移除", width="stretch"):
+            if chain.remove_participant(pick):
+                persist_chain()
+                st.rerun()
+            else:
+                st.error("移除失败")
+
+
+# ── 页面 9：数据分析 ────────────────────────────────────────────────────────
+
+
+def page_analytics() -> None:
+    st.header("📈 数据分析")
+    chain = get_chain()
+
+    all_tx = chain.all_transactions()
+    if not all_tx:
+        st.info("暂无交易数据")
+        return
+
+    frame = pd.DataFrame(
+        [
+            {
+                "交易类型": TRANSACTION_TYPES.get(row["tx_type"], row["tx_type"]),
+                "产品": row["data"].get("product_name", "—"),
+            }
+            for row in all_tx
+        ]
+    )
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("交易环节分布")
+        counts = frame["交易类型"].value_counts()
+        fig = go.Figure(
+            go.Bar(
+                x=list(counts.index),
+                y=list(counts.values),
+                marker_color="#1565c0",
+                text=list(counts.values),
+                textposition="auto",
+            )
+        )
+        fig.update_layout(
+            height=320, margin=dict(l=10, r=10, t=20, b=10), yaxis_title="交易数"
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    with right:
+        st.subheader("产品上链完整度")
+        completeness = []
+        for pid in chain.get_product_list():
+            records = chain.trace_product(pid)
+            stages = {r["tx_type"] for r in records}
+            completeness.append(
+                {
+                    "产品": records[0]["data"].get("product_name", pid) if records else pid,
+                    "环节数": len(stages),
+                }
+            )
+        frame2 = pd.DataFrame(completeness).sort_values("环节数", ascending=False)
+        fig2 = go.Figure(
+            go.Bar(
+                x=frame2["产品"],
+                y=frame2["环节数"],
+                marker_color="#2e7d32",
+                text=frame2["环节数"],
+                textposition="auto",
+            )
+        )
+        fig2.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=20, b=10),
+            yaxis_title="已上链环节数（满 4）",
+        )
+        st.plotly_chart(fig2, width="stretch")
+
+    st.divider()
+    st.subheader("🌡️ 各产品在途温度曲线")
+    temp_fig = go.Figure()
+    has_temp = False
+    for pid in chain.get_product_list():
+        records = chain.trace_product(pid)
+        logistics = next((r for r in records if r["tx_type"] == "logistics"), None)
+        if logistics is None:
+            continue
+        report = sc.cold_chain_report(logistics["tx"])
+        if not report["readings"]:
+            continue
+        has_temp = True
+        name = logistics["data"].get("product_name", pid)
+        temp_fig.add_scatter(
+            y=report["readings"], mode="lines+markers", name=name
+        )
+    if has_temp:
+        temp_fig.update_layout(
+            height=340,
+            margin=dict(l=10, r=10, t=20, b=10),
+            yaxis_title="温度 (°C)",
+            xaxis_title="采样点",
+        )
+        st.plotly_chart(temp_fig, width="stretch")
+    else:
+        st.info("暂无温度采样数据")
+
+    st.divider()
+    st.subheader("⛏️ 挖矿效率趋势")
+    if chain.mining_log:
+        log_frame = pd.DataFrame(chain.mining_log)
+        fig3 = go.Figure()
+        fig3.add_bar(
+            x=log_frame["index"].astype(str),
+            y=log_frame["attempts"],
+            name="哈希尝试次数",
+            marker_color="#ef6c00",
+        )
+        fig3.add_scatter(
+            x=log_frame["index"].astype(str),
+            y=log_frame["duration_s"],
+            name="耗时（秒）",
+            yaxis="y2",
+            mode="lines+markers",
+            line=dict(color="#6a1b9a", width=2),
+        )
+        fig3.update_layout(
+            height=340,
+            margin=dict(l=10, r=10, t=20, b=10),
+            yaxis=dict(title="尝试次数"),
+            yaxis2=dict(title="耗时（秒）", overlaying="y", side="right"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            xaxis_title="区块",
+        )
+        st.plotly_chart(fig3, width="stretch")
+    else:
+        st.info("暂无挖矿记录")
+
+    st.divider()
+    st.subheader("🗂️ 全量交易明细")
+    detail_rows = []
+    for row in all_tx:
+        detail_rows.append(
+            {
+                "区块": row.get("block_index", "—"),
+                "环节": TRANSACTION_TYPES.get(row["tx_type"], row["tx_type"]),
+                "产品": row["data"].get("product_name", "—"),
+                "交易 ID": row["tx_id"][:20] + "…",
+                "时间": row.get("timestamp_str", ""),
+            }
+        )
+    st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
+
+
+# ── 侧边栏与入口 ────────────────────────────────────────────────────────────
+
+PAGES = {
+    "📊 总览看板": page_overview,
+    "🔍 产品溯源": page_trace,
+    "🧊 冷链与保质期": page_cold_chain,
+    "➕ 添加交易": page_add_transaction,
+    "⛏️ 挖矿中心": page_mining,
+    "🧱 区块浏览器": page_explorer,
+    "🛡️ 链验证与篡改实验": page_verify,
+    "🏢 参与方管理": page_participants,
+    "📈 数据分析": page_analytics,
+}
+
+
+def sidebar() -> str:
+    with st.sidebar:
+        st.markdown("### 🌾 农产品区块链溯源")
+        status_banner()
+
+        chain = get_chain()
+        stats = chain.get_chain_stats()
+        st.caption(
+            f"区块 {stats['block_count']} · 交易 {stats['total_transactions']} · "
+            f"产品 {stats['unique_products']} · 待打包 {stats['pending_transactions']}"
+        )
+
+        st.divider()
+        choice = st.radio("导航", options=list(PAGES), label_visibility="collapsed")
+
+        st.divider()
+        with st.expander("⚙️ 链管理", expanded=False):
+            if st.button("💾 保存到磁盘", width="stretch"):
+                persist_chain()
+            if st.button("🔄 从磁盘重新加载", width="stretch"):
+                st.session_state.pop("chain", None)
+                st.session_state.pop("chain_backup", None)
+                st.session_state.pop("tamper_result", None)
+                st.rerun()
+            st.caption("重建链（当前数据将丢失）")
+            if st.button("♻️ 重置为空链", width="stretch"):
+                reset_chain(with_demo_data=False)
+            if st.button("🌱 重置为演示数据", width="stretch"):
+                reset_chain(with_demo_data=True)
+
+        st.divider()
+        st.caption(f"📁 数据文件\n\n`{DATA_FILE}`")
+        if "persist_error" in st.session_state:
+            st.warning(f"持久化不可用：{st.session_state['persist_error']}")
+
+        st.caption(
+            f"schema v{SCHEMA_VERSION} · "
+            f"难度 {chain.difficulty} · "
+            f"{'自动调难度' if chain.auto_adjust else '固定难度'}"
+        )
+    return choice
+
+
+def main() -> None:
+    choice = sidebar()
+    PAGES[choice]()
+
+
+if __name__ == "__main__":
+    main()
